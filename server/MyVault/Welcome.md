@@ -1,0 +1,1 @@
+<p># Welcome to My Obsidian Clone This is a note saved directly on my hard drive!</p><p>Hello my name is Ayush kumar Nath</p>
