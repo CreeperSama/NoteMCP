@@ -5,24 +5,20 @@ import StarterKit from '@tiptap/starter-kit';
 const Editor = ({ initialContent, fileName, onSave }) => {
     const editor = useEditor({
         extensions: [StarterKit],
-        content: initialContent || '', // Load content if available
+        content: initialContent || '',
         editorProps: {
             attributes: {
-                class: 'prose prose-invert max-w-none focus:outline-none text-obsidian-text text-lg leading-relaxed min-h-[500px]',
+                class: 'prose prose-invert max-w-none focus:outline-none text-obsidian-text text-lg leading-relaxed min-h-[500px] p-4',
             },
         },
-        // AUTO-SAVE LOGIC
         onUpdate: ({ editor }) => {
             const html = editor.getHTML();
-            onSave(html); // Trigger the save function passed from App.jsx
+            onSave(html);
         },
     });
 
-    // WATCH FOR FILE CHANGES
-    // When 'initialContent' changes (user clicked a new file), update the editor
     useEffect(() => {
         if (editor && initialContent !== undefined) {
-            // We only update if the content is actually different to avoid cursor jumping
             if (editor.getHTML() !== initialContent) {
                 editor.commands.setContent(initialContent);
             }
@@ -35,12 +31,18 @@ const Editor = ({ initialContent, fileName, onSave }) => {
 
     return (
         <div className="w-full max-w-4xl mx-auto mt-4 pb-20">
-            {/* Title of the note being edited */}
+
+            {/* 1. TITLE (Outside the Print Area) */}
+            {/* This will show on screen, but NOT in the PDF */}
             <div className="mb-6 text-sm text-obsidian-muted uppercase tracking-widest font-bold">
                 Editing: <span className="text-obsidian-accent">{fileName || 'Untitled'}</span>
             </div>
 
-            <EditorContent editor={editor} />
+            {/* 2. PRINT AREA (The PDF Tool only looks at this div) */}
+            <div id="print-area">
+                <EditorContent editor={editor} />
+            </div>
+
         </div>
     );
 };
