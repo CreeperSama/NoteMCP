@@ -1,143 +1,121 @@
 const express = require('express');
 const cors = require('cors');
-const fs = require('fs').promises; // Use promises for async/await
+const fs = require('fs').promises;
 const path = require('path');
-const mongoose = require('mongoose'); // Import Mongoose
+const mongoose = require('mongoose');
 const app = express();
 const PORT = 5000;
 
-// Middleware
 app.use(cors());
-app.use(express.json()); // Allow JSON data in requests
+app.use(express.json());
 
-// --- 1. CONNECT TO MONGODB ---
-// Connects to your local MongoDB instance
+// --- MONGODB CONNECTION ---
 mongoose.connect('mongodb://localhost:27017/obsidian-clone')
-    .then(() => console.log('✅ Connected to MongoDB'))
+    .then(() => console.log('✅ MongoDB Connected'))
     .catch(err => console.error('❌ MongoDB Error:', err));
 
-// --- 2. DEFINE THE HISTORY SCHEMA ---
 const HistorySchema = new mongoose.Schema({
-    filename: String,
+    filename: String, // Stores the relative path e.g. "Work/Project1.md"
     content: String,
     timestamp: { type: Date, default: Date.now }
 });
-
 const History = mongoose.model('History', HistorySchema);
 
-// --- CONFIGURATION ---
-// This is where your notes will be saved on your computer.
+// --- FILE SYSTEM CONFIG ---
 const VAULT_PATH = path.join(__dirname, 'MyVault');
 
-// Ensure the Vault folder exists when server starts
 (async () => {
     try {
         await fs.mkdir(VAULT_PATH, { recursive: true });
-        console.log(`📂 Vault is ready at: ${VAULT_PATH}`);
-    } catch (err) {
-        console.error("Error creating vault:", err);
-    }
+        console.log(`📂 Vault Path: ${VAULT_PATH}`);
+    } catch (err) { console.error("Vault creation error:", err); }
 })();
 
-// --- ROUTES ---
+// --- HELPER: RECURSIVE DIRECTORY SCAN ---
+async function scanDirectory(dirPath) {
+    const entries = await fs.readdir(dirPath, { withFileTypes: true });
 
-// 1. GET all files (List of notes)
+    const tree = await Promise.all(entries.map(async (entry) => {
+        const relativePath = path.relative(VAULT_PATH, path.join(dirPath, entry.name));
+
+        if (entry.isDirectory()) {
+            return {
+                type: 'folder',
+                name: entry.name,
+                path: relativePath,
+                children: await scanDirectory(path.join(dirPath, entry.name))
+            };
+        } else if (entry.name.endsWith('.md')) {
+            return {
+                type: 'file',
+                name: entry.name,
+                path: relativePath
+            };
+        }
+        return null;
+    }));
+
+    return tree.filter(item => item !== null);
+}
+
+// --- API ROUTES ---
+
+// Get the entire folder/file tree
 app.get('/api/files', async (req, res) => {
     try {
-        const files = await fs.readdir(VAULT_PATH);
-        // Filter only .md files
-        const mdFiles = files.filter(file => file.endsWith('.md'));
-        res.json(mdFiles);
-    } catch (err) {
-        res.status(500).json({ error: 'Failed to read directory' });
-    }
+        const tree = await scanDirectory(VAULT_PATH);
+        res.json(tree);
+    } catch (err) { res.status(500).json({ error: 'Scan failed' }); }
 });
 
-// 2. GET (Read a specific note)
-app.get('/api/file/:filename', async (req, res) => {
-    const { filename } = req.params;
-    const filePath = path.join(VAULT_PATH, filename);
+// Read a file (using ?path=Folder/File.md)
+app.get('/api/file', async (req, res) => {
+    const filePath = req.query.path;
+    if (!filePath) return res.status(400).json({ error: 'Path is required' });
 
     try {
-        const content = await fs.readFile(filePath, 'utf8');
+        const content = await fs.readFile(path.join(VAULT_PATH, filePath), 'utf8');
         res.json({ content });
-    } catch (err) {
-        res.status(404).json({ error: 'File not found' });
-    }
+    } catch (err) { res.status(404).json({ error: 'File not found' }); }
 });
 
-// 3. POST (Save a note + Save History)
+// Create a folder
+app.post('/api/folder', async (req, res) => {
+    const { path: folderPath } = req.body;
+    try {
+        await fs.mkdir(path.join(VAULT_PATH, folderPath), { recursive: true });
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: 'Folder creation failed' }); }
+});
+
+// Save a file + History
 app.post('/api/save', async (req, res) => {
-    const { filename, content } = req.body;
-
-    if (!filename || !content) {
-        return res.status(400).json({ error: 'Filename and content are required' });
-    }
-
-    // Ensure filename ends with .md
-    const safeName = filename.endsWith('.md') ? filename : `${filename}.md`;
-    const filePath = path.join(VAULT_PATH, safeName);
+    const { path: filePath, content } = req.body;
+    const fullPath = path.join(VAULT_PATH, filePath);
 
     try {
-        // A. Write to HARD DRIVE (The "Real" File)
-        await fs.writeFile(filePath, content, 'utf8');
-
-        // B. Write to DATABASE (The "History" Snapshot)
-        await History.create({
-            filename: safeName,
-            content: content
-        });
-
-        console.log(`Saved & Snapshotted: ${safeName}`);
-        res.json({ message: 'File saved successfully', filename: safeName });
-    } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: 'Failed to save file' });
-    }
+        await fs.writeFile(fullPath, content, 'utf8');
+        await History.create({ filename: filePath, content }); // Snapshot for history
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: 'Save failed' }); }
 });
 
-// 4. POST (Rename a note) - NEW FEATURE
+// Rename/Move a file
 app.post('/api/rename', async (req, res) => {
-    const { oldName, newName } = req.body;
-    if (!oldName || !newName) return res.status(400).json({ error: 'Missing names' });
-
-    const oldPath = path.join(VAULT_PATH, oldName);
-    const safeNewName = newName.endsWith('.md') ? newName : `${newName}.md`;
-    const newPath = path.join(VAULT_PATH, safeNewName);
-
+    const { oldPath, newPath } = req.body;
     try {
-        // Check if new name already exists to prevent overwriting
-        try {
-            await fs.access(newPath);
-            // If access works, file exists -> Error
-            return res.status(409).json({ error: 'File already exists' });
-        } catch (e) {
-            // If access fails, file does not exist -> Good to go!
-        }
-
-        await fs.rename(oldPath, newPath);
-        console.log(`Renamed: ${oldName} -> ${safeNewName}`);
-
-        res.json({ success: true, newName: safeNewName });
-    } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: 'Rename failed' });
-    }
+        await fs.rename(path.join(VAULT_PATH, oldPath), path.join(VAULT_PATH, newPath));
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: 'Rename failed' }); }
 });
 
-// 5. GET (Fetch History for a specific note)
-app.get('/api/history/:filename', async (req, res) => {
+// Fetch history for a file
+app.get('/api/history', async (req, res) => {
+    const filePath = req.query.path;
     try {
-        const { filename } = req.params;
-        // Find all versions of this file, sort by newest first, limit to 20
-        const versions = await History.find({ filename }).sort({ timestamp: -1 }).limit(20);
+        const versions = await History.find({ filename: filePath }).sort({ timestamp: -1 }).limit(20);
         res.json(versions);
-    } catch (err) {
-        res.status(500).json({ error: 'Failed to fetch history' });
-    }
+    } catch (err) { res.status(500).json({ error: 'History fetch failed' }); }
 });
 
-// Start Server
-app.listen(PORT, () => {
-    console.log(`🚀 Server running on http://localhost:${PORT}`);
-});
+app.listen(PORT, () => console.log(`🚀 Server on http://localhost:${PORT}`));
