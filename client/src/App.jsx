@@ -49,6 +49,9 @@ const App = () => {
   const [historyList, setHistoryList] = useState([]);
   const [isSidebarOpen, setSidebarOpen] = useState(true);
 
+  // NEW: Forces the editor to refresh when a completely new file is loaded
+  const [fileLoadKey, setFileLoadKey] = useState(0);
+
   useEffect(() => { fetchFiles(); }, []);
 
   const fetchFiles = async () => {
@@ -63,10 +66,12 @@ const App = () => {
       const res = await axios.get(`${API_URL}/file?path=${encodeURIComponent(path)}`);
       setActiveFile(path);
       setContent(res.data.content);
+      setFileLoadKey(Date.now()); // Forces the editor to re-render with new content
       setStatus('Saved');
     } catch (e) { console.error("Read error", e); }
   };
 
+  // --- SAVE & AUTO-RENAME LOGIC ---
   const debouncedSave = useCallback(
     debounce(async (currentPath, newContent) => {
       if (!currentPath) return;
@@ -75,9 +80,11 @@ const App = () => {
 
       const newTitle = extractTitle(newContent);
       if (newTitle) {
-        const pathParts = currentPath.split('/');
+        // Handle both forward slashes and backslashes for cross-platform support
+        const pathParts = currentPath.split(/[/\\]/);
         const oldFileName = pathParts.pop();
         const folderPath = pathParts.join('/');
+
         const potentialFileName = `${newTitle}.md`;
         const potentialNewPath = folderPath ? `${folderPath}/${potentialFileName}` : potentialFileName;
 
@@ -85,7 +92,8 @@ const App = () => {
           try {
             await axios.post(`${API_URL}/rename`, { oldPath: currentPath, newPath: potentialNewPath });
             finalPath = potentialNewPath;
-            setActiveFile(finalPath);
+            // Safely update active file ONLY if we are still looking at it
+            setActiveFile(prev => prev === currentPath ? finalPath : prev);
             await fetchFiles();
           } catch (err) { console.warn("Rename skipped"); }
         }
@@ -134,7 +142,7 @@ const App = () => {
 
     const opt = {
       margin: [0.5, 0.5, 0.5, 0.5],
-      filename: activeFile ? activeFile.split('/').pop().replace('.md', '.pdf') : 'note.pdf',
+      filename: activeFile ? activeFile.split(/[/\\]/).pop().replace('.md', '.pdf') : 'note.pdf',
       jsPDF: { unit: 'in', format: 'letter', orientation: 'portrait' }
     };
 
@@ -162,7 +170,7 @@ const App = () => {
         <div className="flex items-center justify-between px-4 py-3 border-b border-obsidian-border/50 min-w-[250px]">
           <div className="flex flex-col">
             <span className="text-[10px] font-bold text-obsidian-muted uppercase tracking-widest">Explorer</span>
-            {selectedFolder && <span className="text-[9px] text-obsidian-accent truncate max-w-[120px]">Target: {selectedFolder}/</span>}
+            {selectedFolder && <span className="text-[9px] text-obsidian-accent truncate max-w-[120px]">Target: {selectedFolder.split(/[/\\]/).pop()}/</span>}
           </div>
           <div className="flex gap-1">
             <button onClick={createNewFile} className="p-1 hover:bg-white/10 rounded"><FilePlus size={16} /></button>
@@ -200,7 +208,12 @@ const App = () => {
         </div>
         <div className="flex-1 overflow-y-auto px-12 py-8">
           {activeFile ? (
-            <Editor initialContent={content} fileName={activeFile.split('/').pop()} onSave={(newContent) => debouncedSave(activeFile, newContent)} />
+            <Editor
+              initialContent={content}
+              fileName={activeFile.split(/[/\\]/).pop()}
+              fileLoadKey={fileLoadKey} // Passed down to force refresh
+              onSave={(newContent) => debouncedSave(activeFile, newContent)}
+            />
           ) : (
             <div className="flex flex-col items-center justify-center h-full text-obsidian-muted space-y-4">
               <LayoutGrid size={48} className="opacity-20" />
@@ -226,7 +239,7 @@ const App = () => {
                   <div className="text-xs text-gray-400 line-clamp-3 mb-3">
                     {stripHtml(ver.content).substring(0, 150)}...
                   </div>
-                  <button onClick={() => { setContent(ver.content); setShowHistory(false); }} className="w-full py-1.5 text-[10px] bg-obsidian-accent/10 text-obsidian-accent rounded">Restore</button>
+                  <button onClick={() => { setContent(ver.content); setFileLoadKey(Date.now()); setShowHistory(false); }} className="w-full py-1.5 text-[10px] bg-obsidian-accent/10 text-obsidian-accent rounded">Restore</button>
                 </div>
               ))}
             </div>
