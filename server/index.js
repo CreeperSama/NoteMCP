@@ -1,121 +1,171 @@
 const express = require('express');
 const cors = require('cors');
-const fs = require('fs').promises;
+const fs = require('fs');
 const path = require('path');
 const mongoose = require('mongoose');
+
 const app = express();
 const PORT = 5000;
+// This tells Node to look in the 'MyVault' folder located in the same directory as index.js
+const NOTES_DIR = path.join(__dirname, 'MyVault');
 
-app.use(cors());
-app.use(express.json());
+// Log it so you can verify in the terminal when you start the server
+console.log("-----------------------------------------");
+console.log("📂 Vault Location:", NOTES_DIR);
+console.log("-----------------------------------------") // <--- ADD THIS LINE
 
-// --- MONGODB CONNECTION ---
-mongoose.connect('mongodb://localhost:27017/obsidian-clone')
-    .then(() => console.log('✅ MongoDB Connected'))
-    .catch(err => console.error('❌ MongoDB Error:', err));
+// --- DATABASE SETUP (For Version History) ---
+mongoose.connect('mongodb://127.0.0.1:27017/notemcp')
+    .then(() => console.log("Connected to MongoDB"))
+    .catch(err => console.error("MongoDB connection error:", err));
 
 const HistorySchema = new mongoose.Schema({
-    filename: String, // Stores the relative path e.g. "Work/Project1.md"
+    path: String,
     content: String,
     timestamp: { type: Date, default: Date.now }
 });
 const History = mongoose.model('History', HistorySchema);
 
-// --- FILE SYSTEM CONFIG ---
-const VAULT_PATH = path.join(__dirname, 'MyVault');
+// --- MIDDLEWARE ---
+app.use(cors());
+app.use(express.json());
 
-(async () => {
-    try {
-        await fs.mkdir(VAULT_PATH, { recursive: true });
-        console.log(`📂 Vault Path: ${VAULT_PATH}`);
-    } catch (err) { console.error("Vault creation error:", err); }
-})();
-
-// --- HELPER: RECURSIVE DIRECTORY SCAN ---
-async function scanDirectory(dirPath) {
-    const entries = await fs.readdir(dirPath, { withFileTypes: true });
-
-    const tree = await Promise.all(entries.map(async (entry) => {
-        const relativePath = path.relative(VAULT_PATH, path.join(dirPath, entry.name));
-
-        if (entry.isDirectory()) {
-            return {
-                type: 'folder',
-                name: entry.name,
-                path: relativePath,
-                children: await scanDirectory(path.join(dirPath, entry.name))
-            };
-        } else if (entry.name.endsWith('.md')) {
-            return {
-                type: 'file',
-                name: entry.name,
-                path: relativePath
-            };
-        }
-        return null;
-    }));
-
-    return tree.filter(item => item !== null);
+// Ensure the notes directory exists
+if (!fs.existsSync(NOTES_DIR)) {
+    fs.mkdirSync(NOTES_DIR);
 }
 
-// --- API ROUTES ---
+// --- HELPER: RECURSIVE FILE TREE ---
+const getFileTree = (dir, relativeDir = '') => {
+    const files = fs.readdirSync(dir);
+    return files.map(file => {
+        const filePath = path.join(dir, file);
+        const relativePath = path.join(relativeDir, file);
+        const stats = fs.statSync(filePath);
 
-// Get the entire folder/file tree
-app.get('/api/files', async (req, res) => {
+        if (stats.isDirectory()) {
+            return {
+                name: file,
+                path: relativePath,
+                type: 'directory',
+                children: getFileTree(filePath, relativePath)
+            };
+        } else {
+            return {
+                name: file,
+                path: relativePath,
+                type: 'file'
+            };
+        }
+    });
+};
+
+// --- ROUTES ---
+
+// 1. Get entire file tree
+app.get('/api/files', (req, res) => {
     try {
-        const tree = await scanDirectory(VAULT_PATH);
+        const tree = getFileTree(NOTES_DIR);
         res.json(tree);
-    } catch (err) { res.status(500).json({ error: 'Scan failed' }); }
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
 });
 
-// Read a file (using ?path=Folder/File.md)
-app.get('/api/file', async (req, res) => {
-    const filePath = req.query.path;
-    if (!filePath) return res.status(400).json({ error: 'Path is required' });
-
-    try {
-        const content = await fs.readFile(path.join(VAULT_PATH, filePath), 'utf8');
+// 2. Read file content
+app.get('/api/file', (req, res) => {
+    const filePath = path.join(NOTES_DIR, req.query.path);
+    if (fs.existsSync(filePath)) {
+        const content = fs.readFileSync(filePath, 'utf-8');
         res.json({ content });
-    } catch (err) { res.status(404).json({ error: 'File not found' }); }
+    } else {
+        res.status(404).send('File not found');
+    }
 });
 
-// Create a folder
-app.post('/api/folder', async (req, res) => {
-    const { path: folderPath } = req.body;
-    try {
-        await fs.mkdir(path.join(VAULT_PATH, folderPath), { recursive: true });
-        res.json({ success: true });
-    } catch (err) { res.status(500).json({ error: 'Folder creation failed' }); }
-});
-
-// Save a file + History
+// 3. Save file (and create history entry)
 app.post('/api/save', async (req, res) => {
-    const { path: filePath, content } = req.body;
-    const fullPath = path.join(VAULT_PATH, filePath);
+    const { path: itemPath, content } = req.body;
+    const filePath = path.join(NOTES_DIR, itemPath);
 
     try {
-        await fs.writeFile(fullPath, content, 'utf8');
-        await History.create({ filename: filePath, content }); // Snapshot for history
-        res.json({ success: true });
-    } catch (err) { res.status(500).json({ error: 'Save failed' }); }
+        // Save to Disk
+        fs.writeFileSync(filePath, content);
+
+        // Save to MongoDB History (only if content actually exists)
+        if (content && content !== '<h1>New Note</h1>') {
+            await History.create({ path: itemPath, content });
+        }
+
+        res.json({ message: 'Saved' });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
 });
 
-// Rename/Move a file
-app.post('/api/rename', async (req, res) => {
+// 4. Rename File (for auto-rename titles)
+app.post('/api/rename', (req, res) => {
     const { oldPath, newPath } = req.body;
+    const oldFullPath = path.join(NOTES_DIR, oldPath);
+    const newFullPath = path.join(NOTES_DIR, newPath);
+
     try {
-        await fs.rename(path.join(VAULT_PATH, oldPath), path.join(VAULT_PATH, newPath));
-        res.json({ success: true });
-    } catch (err) { res.status(500).json({ error: 'Rename failed' }); }
+        if (fs.existsSync(oldFullPath)) {
+            fs.renameSync(oldFullPath, newFullPath);
+            res.json({ message: 'Renamed' });
+        } else {
+            res.status(404).json({ error: 'Source file not found' });
+        }
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
 });
 
-// Fetch history for a file
+// 5. Create Folder
+app.post('/api/folder', (req, res) => {
+    const folderPath = path.join(NOTES_DIR, req.body.path);
+    try {
+        if (!fs.existsSync(folderPath)) {
+            fs.mkdirSync(folderPath, { recursive: true });
+            res.json({ message: 'Folder created' });
+        } else {
+            res.status(400).json({ message: 'Folder already exists' });
+        }
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// 6. Delete File or Folder (Recursive)
+app.post('/api/delete', (req, res) => {
+    const { path: itemPath } = req.body;
+    const fullPath = path.join(NOTES_DIR, itemPath);
+
+    try {
+        if (fs.existsSync(fullPath)) {
+            // rmSync with recursive:true deletes folders + everything inside
+            fs.rmSync(fullPath, { recursive: true, force: true });
+            res.json({ message: 'Deleted successfully' });
+        } else {
+            res.status(404).json({ error: 'Item not found' });
+        }
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// 7. Get History for a file
 app.get('/api/history', async (req, res) => {
-    const filePath = req.query.path;
     try {
-        const versions = await History.find({ filename: filePath }).sort({ timestamp: -1 }).limit(20);
+        const versions = await History.find({ path: req.query.path })
+            .sort({ timestamp: -1 })
+            .limit(10);
         res.json(versions);
-    } catch (err) { res.status(500).json({ error: 'History fetch failed' }); }
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
 });
 
-app.listen(PORT, () => console.log(`🚀 Server on http://localhost:${PORT}`));
+app.listen(PORT, () => {
+    console.log(`Backend running at http://localhost:${PORT}`);
+});

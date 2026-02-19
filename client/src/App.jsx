@@ -1,16 +1,16 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import axios from 'axios';
 import html2pdf from 'html2pdf.js';
-import {
-  Search,
-  FilePlus,
-  FolderPlus,
-  Download,
-  X,
-  LayoutGrid,
-  History as HistoryIcon,
-  PanelLeftClose,
-  PanelLeftOpen
+import { 
+  Search, 
+  FilePlus, 
+  FolderPlus, 
+  Download, 
+  X, 
+  LayoutGrid, 
+  History as HistoryIcon, 
+  PanelLeftClose, 
+  PanelLeftOpen 
 } from 'lucide-react';
 import Editor from './Editor';
 import FileTreeItem from './FileTree';
@@ -41,15 +41,15 @@ const API_URL = 'http://localhost:5000/api';
 
 const App = () => {
   const [fileTree, setFileTree] = useState([]);
-  const [activeFile, setActiveFile] = useState(null);
-  const [selectedFolder, setSelectedFolder] = useState(null);
+  const [activeFile, setActiveFile] = useState(null); 
+  const [selectedFolder, setSelectedFolder] = useState(null); 
   const [content, setContent] = useState('');
   const [status, setStatus] = useState('Saved');
   const [showHistory, setShowHistory] = useState(false);
   const [historyList, setHistoryList] = useState([]);
   const [isSidebarOpen, setSidebarOpen] = useState(true);
-
-  // NEW: Forces the editor to refresh when a completely new file is loaded
+  
+  // State to force-reset the editor when switching files
   const [fileLoadKey, setFileLoadKey] = useState(0);
 
   useEffect(() => { fetchFiles(); }, []);
@@ -66,12 +66,35 @@ const App = () => {
       const res = await axios.get(`${API_URL}/file?path=${encodeURIComponent(path)}`);
       setActiveFile(path);
       setContent(res.data.content);
-      setFileLoadKey(Date.now()); // Forces the editor to re-render with new content
+      setFileLoadKey(Date.now()); // Reset key to clear the editor state
       setStatus('Saved');
     } catch (e) { console.error("Read error", e); }
   };
 
-  // --- SAVE & AUTO-RENAME LOGIC ---
+  // --- DELETE LOGIC ---
+  const handleDelete = async (path, type) => {
+    const confirmMsg = `Are you sure you want to delete this ${type === 'directory' ? 'folder and everything inside it' : 'file'}?`;
+    if (!window.confirm(confirmMsg)) return;
+
+    try {
+      await axios.post(`${API_URL}/delete`, { path });
+      
+      // Clear view if the active file was deleted
+      if (activeFile === path || (type === 'directory' && activeFile?.startsWith(path))) {
+        setActiveFile(null);
+        setContent('');
+      }
+      
+      if (selectedFolder === path) setSelectedFolder(null);
+
+      fetchFiles();
+    } catch (e) {
+      console.error("Delete error", e);
+      alert("Failed to delete item.");
+    }
+  };
+
+  // --- SAVE & AUTO-RENAME ---
   const debouncedSave = useCallback(
     debounce(async (currentPath, newContent) => {
       if (!currentPath) return;
@@ -80,11 +103,10 @@ const App = () => {
 
       const newTitle = extractTitle(newContent);
       if (newTitle) {
-        // Handle both forward slashes and backslashes for cross-platform support
-        const pathParts = currentPath.split(/[/\\]/);
+        const pathParts = currentPath.split(/[/\\]/); 
         const oldFileName = pathParts.pop();
-        const folderPath = pathParts.join('/');
-
+        const folderPath = pathParts.join('/'); 
+        
         const potentialFileName = `${newTitle}.md`;
         const potentialNewPath = folderPath ? `${folderPath}/${potentialFileName}` : potentialFileName;
 
@@ -92,7 +114,6 @@ const App = () => {
           try {
             await axios.post(`${API_URL}/rename`, { oldPath: currentPath, newPath: potentialNewPath });
             finalPath = potentialNewPath;
-            // Safely update active file ONLY if we are still looking at it
             setActiveFile(prev => prev === currentPath ? finalPath : prev);
             await fetchFiles();
           } catch (err) { console.warn("Rename skipped"); }
@@ -137,7 +158,7 @@ const App = () => {
 
   const handleDownloadPDF = () => {
     const element = document.getElementById('print-area');
-    const editorContent = element?.querySelector('.ProseMirror');
+    const editorContent = element?.querySelector('.ProseMirror'); 
     if (!element) return;
 
     const opt = {
@@ -159,13 +180,15 @@ const App = () => {
 
   return (
     <div className="flex h-screen w-full bg-obsidian-base text-obsidian-text font-sans overflow-hidden relative">
+      {/* Sidebar - Narrow icons */}
       <div className="w-12 flex flex-col items-center py-4 border-r border-obsidian-border bg-[#161616] z-20">
         <div onClick={() => setSidebarOpen(!isSidebarOpen)} className="p-2 mb-4 hover:bg-white/10 rounded cursor-pointer text-obsidian-muted">
-          {isSidebarOpen ? <PanelLeftClose size={20} /> : <PanelLeftOpen size={20} />}
+           {isSidebarOpen ? <PanelLeftClose size={20}/> : <PanelLeftOpen size={20}/>}
         </div>
-        <div className="p-2 hover:bg-white/10 rounded cursor-pointer text-obsidian-muted"><Search size={20} /></div>
+        <div className="p-2 hover:bg-white/10 rounded cursor-pointer text-obsidian-muted"><Search size={20}/></div>
       </div>
 
+      {/* Sidebar - Explorer */}
       <div className={`${isSidebarOpen ? 'w-64' : 'w-0'} transition-all duration-300 flex flex-col border-r border-obsidian-border bg-obsidian-base overflow-hidden`}>
         <div className="flex items-center justify-between px-4 py-3 border-b border-obsidian-border/50 min-w-[250px]">
           <div className="flex flex-col">
@@ -173,18 +196,19 @@ const App = () => {
             {selectedFolder && <span className="text-[9px] text-obsidian-accent truncate max-w-[120px]">Target: {selectedFolder.split(/[/\\]/).pop()}/</span>}
           </div>
           <div className="flex gap-1">
-            <button onClick={createNewFile} className="p-1 hover:bg-white/10 rounded"><FilePlus size={16} /></button>
-            <button onClick={createNewFolder} className="p-1 hover:bg-white/10 rounded"><FolderPlus size={16} /></button>
+            <button onClick={createNewFile} className="p-1 hover:bg-white/10 rounded"><FilePlus size={16}/></button>
+            <button onClick={createNewFolder} className="p-1 hover:bg-white/10 rounded"><FolderPlus size={16}/></button>
           </div>
         </div>
         <div className="flex-1 overflow-y-auto py-2 min-w-[250px]">
           {fileTree.map((item) => (
-            <FileTreeItem
-              key={item.path}
-              item={item}
-              level={0}
-              onFileClick={handleFileClick}
+            <FileTreeItem 
+              key={item.path} 
+              item={item} 
+              level={0} 
+              onFileClick={handleFileClick} 
               onFolderClick={(path) => setSelectedFolder(path)}
+              onDelete={handleDelete}
               selectedPath={activeFile}
               selectedFolder={selectedFolder}
             />
@@ -193,48 +217,50 @@ const App = () => {
         </div>
       </div>
 
+      {/* Main Content */}
       <div className="flex-1 flex flex-col bg-obsidian-dark transition-all duration-300">
         <div className="h-10 flex items-center justify-between px-6 border-b border-obsidian-border bg-obsidian-base">
-          <span className="text-xs font-mono text-obsidian-muted truncate max-w-[300px]">{activeFile || 'No file selected'}</span>
-          <div className="flex items-center space-x-4">
-            {activeFile && (
-              <>
-                <button onClick={handleDownloadPDF} className="flex items-center text-xs text-obsidian-muted hover:text-white"><Download size={14} className="mr-1" /> PDF</button>
-                <button onClick={openHistory} className="flex items-center text-xs text-obsidian-muted hover:text-white"><HistoryIcon size={14} className="mr-1" /> History</button>
-              </>
-            )}
-            <span className="text-xs text-obsidian-muted w-16 text-right">{status}</span>
-          </div>
+           <span className="text-xs font-mono text-obsidian-muted truncate max-w-[300px]">{activeFile || 'No file selected'}</span>
+           <div className="flex items-center space-x-4">
+             {activeFile && (
+               <>
+                 <button onClick={handleDownloadPDF} className="flex items-center text-xs text-obsidian-muted hover:text-white"><Download size={14} className="mr-1"/> PDF</button>
+                 <button onClick={openHistory} className="flex items-center text-xs text-obsidian-muted hover:text-white"><HistoryIcon size={14} className="mr-1"/> History</button>
+               </>
+             )}
+             <span className="text-xs text-obsidian-muted w-16 text-right">{status}</span>
+           </div>
         </div>
         <div className="flex-1 overflow-y-auto px-12 py-8">
-          {activeFile ? (
-            <Editor
-              initialContent={content}
-              fileName={activeFile.split(/[/\\]/).pop()}
-              fileLoadKey={fileLoadKey} // Passed down to force refresh
-              onSave={(newContent) => debouncedSave(activeFile, newContent)}
-            />
-          ) : (
-            <div className="flex flex-col items-center justify-center h-full text-obsidian-muted space-y-4">
-              <LayoutGrid size={48} className="opacity-20" />
-              <p className="text-sm">Select a note or create a new one to begin</p>
-            </div>
-          )}
+           {activeFile ? (
+             <Editor 
+               initialContent={content} 
+               fileName={activeFile.split(/[/\\]/).pop()} 
+               fileLoadKey={fileLoadKey}
+               onSave={(newContent) => debouncedSave(activeFile, newContent)} 
+             />
+           ) : (
+             <div className="flex flex-col items-center justify-center h-full text-obsidian-muted space-y-4">
+                <LayoutGrid size={48} className="opacity-20"/>
+                <p className="text-sm">Select a note or create a new one to begin</p>
+             </div>
+           )}
         </div>
       </div>
 
+      {/* History Sidebar */}
       {showHistory && (
         <div className="absolute inset-0 bg-black/60 flex justify-end z-50 backdrop-blur-sm">
           <div className="w-96 bg-obsidian-base border-l border-obsidian-border h-full flex flex-col shadow-2xl">
             <div className="p-4 border-b border-obsidian-border flex justify-between items-center">
               <h2 className="font-bold text-sm uppercase tracking-widest">History</h2>
-              <button onClick={() => setShowHistory(false)}><X size={18} /></button>
+              <button onClick={() => setShowHistory(false)}><X size={18}/></button>
             </div>
             <div className="flex-1 overflow-y-auto p-4 space-y-3">
               {historyList.map((ver) => (
                 <div key={ver._id} className="p-3 bg-obsidian-dark rounded border border-obsidian-border">
                   <div className="text-[10px] text-obsidian-muted mb-2 flex justify-between">
-                    <span>{new Date(ver.timestamp).toLocaleDateString()}</span>
+                     <span>{new Date(ver.timestamp).toLocaleDateString()}</span>
                   </div>
                   <div className="text-xs text-gray-400 line-clamp-3 mb-3">
                     {stripHtml(ver.content).substring(0, 150)}...
