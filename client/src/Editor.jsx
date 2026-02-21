@@ -136,6 +136,25 @@ const EmbeddedCanvas = ({ node, updateAttributes }) => {
         setEdges((eds) => [...eds, newEdge]);
     }, []);
 
+    // --- NEW: ALT + DRAG TO DUPLICATE LOGIC ---
+    const onNodeDragStart = useCallback((event, dragNode) => {
+        if (event.altKey) {
+            const duplicateNode = {
+                ...dragNode,
+                id: `node_${Date.now()}_${Math.random().toString(36).substring(7)}`,
+                selected: false,
+                position: { x: dragNode.position.x, y: dragNode.position.y },
+                data: {
+                    ...dragNode.data,
+                    onChange: handleNodeTextChange,
+                    onChangeColor: handleNodeColorChange,
+                    onDelete: handleDeleteNode
+                }
+            };
+            setNodes((nds) => [...nds, duplicateNode]);
+        }
+    }, [handleNodeTextChange, handleNodeColorChange, handleDeleteNode]);
+
     const addCard = () => {
         const newNode = {
             id: `node_${Date.now()}`, type: 'card', position: { x: 50, y: 50 },
@@ -150,7 +169,7 @@ const EmbeddedCanvas = ({ node, updateAttributes }) => {
                 <button onClick={addCard} className="px-4 py-2 bg-[#2a2a2a] hover:bg-[#333] text-white rounded shadow-lg border border-obsidian-border text-xs font-bold uppercase tracking-wider transition-colors">+ Add Card</button>
             </div>
 
-            <div className="absolute top-4 right-4 z-10 w-1/3">
+            <div className="absolute top-4 right-4 z-10 w-1/3 hide-on-print">
                 <input
                     type="text" value={title} onChange={(e) => setTitle(e.target.value)} onKeyDown={(e) => e.stopPropagation()}
                     placeholder="Embedded Canvas Title..."
@@ -159,8 +178,18 @@ const EmbeddedCanvas = ({ node, updateAttributes }) => {
             </div>
 
             <ReactFlow
-                nodes={nodes} edges={edges} onNodesChange={onNodesChange} onEdgesChange={onEdgesChange} onConnect={onConnect}
-                nodeTypes={nodeTypes} onInit={setRfInstance} connectionMode={ConnectionMode.Loose} fitView minZoom={0.1} maxZoom={2}
+                nodes={nodes}
+                edges={edges}
+                onNodesChange={onNodesChange}
+                onEdgesChange={onEdgesChange}
+                onConnect={onConnect}
+                onNodeDragStart={onNodeDragStart} // <--- NEW: Hook up the event handler
+                nodeTypes={nodeTypes}
+                onInit={setRfInstance}
+                connectionMode={ConnectionMode.Loose}
+                fitView
+                minZoom={0.1}
+                maxZoom={2}
             >
                 <Background color="#333" gap={20} size={2} className="hide-on-print" />
                 <Controls className="!bg-[#1e1e1e] !border-obsidian-border !fill-white shadow-xl rounded overflow-hidden hide-on-print" />

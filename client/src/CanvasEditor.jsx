@@ -27,7 +27,6 @@ const CARD_COLORS = [
 
 const CardNode = ({ id, data, selected }) => {
     const [showPalette, setShowPalette] = useState(false);
-
     const activeColor = CARD_COLORS.find(c => c.id === data.colorId) || CARD_COLORS[0];
 
     return (
@@ -70,7 +69,7 @@ const CardNode = ({ id, data, selected }) => {
                 </div>
             </NodeToolbar>
 
-            {/* CARD BODY WITH DYNAMIC BORDER */}
+            {/* CARD BODY */}
             <div className={`p-[2px] rounded-xl shadow-xl transition-all ${activeColor.class}`}>
                 <div className={`rounded-lg min-w-[200px] min-h-[100px] flex flex-col group ${activeColor.bg} transition-colors duration-300`}>
                     <Handle type="source" id="top" position={Position.Top} className="!bg-white opacity-0 group-hover:opacity-100 transition-opacity" />
@@ -166,6 +165,28 @@ const CanvasEditor = ({ initialData, onSave }) => {
         setEdges((eds) => [...eds, newEdge]);
     }, []);
 
+    // --- NEW: ALT + DRAG TO DUPLICATE LOGIC ---
+    const onNodeDragStart = useCallback((event, node) => {
+        // Check if the user is holding down the Alt (or Option on Mac) key
+        if (event.altKey) {
+            const duplicateNode = {
+                ...node,
+                id: `node_${Date.now()}_${Math.random().toString(36).substring(7)}`, // generate new unique ID
+                selected: false, // ensure the duplicate isn't selected immediately
+                position: { x: node.position.x, y: node.position.y }, // drop it precisely where the original started
+                data: {
+                    ...node.data,
+                    // We must re-bind the functions so the clone works properly
+                    onChange: handleNodeTextChange,
+                    onChangeColor: handleNodeColorChange,
+                    onDelete: handleDeleteNode
+                }
+            };
+            // Add the duplicate node to the canvas
+            setNodes((nds) => [...nds, duplicateNode]);
+        }
+    }, [handleNodeTextChange, handleNodeColorChange, handleDeleteNode]);
+
     // Context Menu Logic
     const onPaneContextMenu = useCallback((event) => {
         event.preventDefault();
@@ -238,6 +259,7 @@ const CanvasEditor = ({ initialData, onSave }) => {
                 onNodesChange={onNodesChange}
                 onEdgesChange={onEdgesChange}
                 onConnect={onConnect}
+                onNodeDragStart={onNodeDragStart} // <--- NEW: Hook up the event handler
                 nodeTypes={nodeTypes}
                 onInit={setRfInstance}
                 onPaneContextMenu={onPaneContextMenu}
